@@ -5,6 +5,7 @@ use std::env;
 use rand::{prelude::*, Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
+#[derive(Clone, Copy)]
 struct Coord {
     y: i32,
     x: i32,
@@ -22,6 +23,7 @@ const END_TURN: usize = 4;
 
 type State = MazeState;
 
+#[derive(Clone)]
 struct MazeState {
     points: Vec<Vec<usize>>,
     turn: usize,
@@ -89,6 +91,30 @@ impl MazeState {
         }
         legal_actions
     }
+
+    fn evaluate_score(&self) -> usize {
+        self.game_score
+    }
+
+    fn greedy_action(&self) -> usize {
+        let legal_actions = self.legal_actions();
+        assert!(!legal_actions.is_empty());
+        let mut best_action = None;
+        let mut highest = None;
+        for action in legal_actions {
+            let next_y = self.character.y + self.dy[action];
+            let next_x = self.character.x + self.dx[action];
+            assert!(0 <= next_y && next_y < H as i32);
+            assert!(0 <= next_x && next_x < W as i32);
+            let next_score = self.points[next_y as usize][next_x as usize];
+            if highest.is_none() || next_score > highest.unwrap() {
+                highest = Some(next_score);
+                best_action = Some(action);
+            }
+        }
+        assert!(best_action.is_some());
+        best_action.unwrap()
+    }
 }
 
 impl fmt::Display for MazeState {
@@ -117,15 +143,48 @@ fn random_action(state: &State, rng: &mut ChaCha12Rng) -> usize {
     legal_actions[rng.gen::<usize>() % legal_actions.len()]
 }
 
+fn greedy_action(state: &State) -> usize {
+    let legal_actions = state.legal_actions();
+    assert!(!legal_actions.is_empty());
+    let mut best_action = None;
+    let mut highest = None;
+    for action in legal_actions {
+        let mut next_state = state.clone();
+        next_state.advance(action);
+        if highest.is_none() || highest.unwrap() < next_state.evaluate_score() {
+            highest = Some(next_state.evaluate_score());
+            best_action = Some(action);
+        }
+    }
+    assert!(best_action.is_some());
+    best_action.unwrap()
+}
+
 fn play_game(seed: u64) {
     let mut state = State::new(seed);
-    let mut rng = ChaCha12Rng::seed_from_u64(seed);
     println!("{}", state);
     while !state.is_done() {
-        state.advance(random_action(&state, &mut rng));
+        state.advance(greedy_action(&state));
         println!("{}", state);
     }
 }
+
+fn test_ai_score(num: usize) {
+    let mut rng = ChaCha12Rng::seed_from_u64(0);
+    let mut score_mean = 0.;
+
+    for seed in 0..num {
+        let mut state = State::new(seed as u64);
+        while !state.is_done() {
+            state.advance(greedy_action(&state));
+        }
+        score_mean += state.game_score as f64;
+    }
+
+    score_mean /= num as f64;
+    println!("score_mean: {score_mean}")
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     let seed = if args.len() > 1 {
@@ -133,5 +192,6 @@ fn main() {
     } else {
         0
     };
-    play_game(seed);
+    let num = 1000;
+    test_ai_score(num);
 }
