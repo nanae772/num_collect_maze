@@ -1,11 +1,11 @@
 #![allow(clippy::needless_range_loop)]
 use core::fmt;
-use std::env;
+use std::{cmp::Ordering, collections::BinaryHeap, env};
 
 use rand::{prelude::*, Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct Coord {
     y: i32,
     x: i32,
@@ -23,14 +23,16 @@ const END_TURN: usize = 4;
 
 type State = MazeState;
 
-#[derive(Clone)]
+#[derive(Clone, Eq)]
 struct MazeState {
     points: Vec<Vec<usize>>,
     turn: usize,
     character: Coord,
     game_score: usize,
+    evaluated_score: usize,
     dx: [i32; 4],
     dy: [i32; 4],
+    first_action: usize,
 }
 
 impl MazeState {
@@ -55,9 +57,11 @@ impl MazeState {
             turn: 0,
             character,
             game_score: 0,
+            evaluated_score: 0,
             // 0: 右, 1: 左, 2: 下, 3:上
             dx: [1, -1, 0, 0],
             dy: [0, 0, 1, -1],
+            first_action: 0,
         }
     }
 
@@ -92,8 +96,8 @@ impl MazeState {
         legal_actions
     }
 
-    fn evaluate_score(&self) -> usize {
-        self.game_score
+    fn evaluate_score(&mut self) {
+        self.evaluated_score = self.game_score
     }
 
     fn greedy_action(&self) -> usize {
@@ -114,6 +118,24 @@ impl MazeState {
         }
         assert!(best_action.is_some());
         best_action.unwrap()
+    }
+}
+
+impl Ord for MazeState {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.evaluated_score.cmp(&other.evaluated_score)
+    }
+}
+
+impl PartialOrd for MazeState {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for MazeState {
+    fn eq(&self, other: &Self) -> bool {
+        self.evaluated_score == other.evaluated_score
     }
 }
 
@@ -151,13 +173,50 @@ fn greedy_action(state: &State) -> usize {
     for action in legal_actions {
         let mut next_state = state.clone();
         next_state.advance(action);
-        if highest.is_none() || highest.unwrap() < next_state.evaluate_score() {
-            highest = Some(next_state.evaluate_score());
+        next_state.evaluate_score();
+        if highest.is_none() || highest.unwrap() < next_state.evaluated_score {
+            highest = Some(next_state.evaluated_score);
             best_action = Some(action);
         }
     }
     assert!(best_action.is_some());
     best_action.unwrap()
+}
+
+fn beam_search_action(state: &State, beam_width: usize, beam_depth: usize) -> usize {
+    let mut now_beam = BinaryHeap::new();
+    let mut best_state: Option<State> = None;
+
+    now_beam.push(state.clone());
+
+    for t in 0..beam_depth {
+        let mut next_beam = BinaryHeap::new();
+        for _ in 0..beam_width {
+            if now_beam.is_empty() {
+                break;
+            }
+            let now_state = now_beam.pop().unwrap();
+            let legal_actions = now_state.legal_actions();
+            for action in legal_actions {
+                let mut next_state = now_state.clone();
+                next_state.advance(action);
+                next_state.evaluate_score();
+                if t == 0 {
+                    next_state.first_action = action;
+                }
+                next_beam.push(next_state);
+            }
+        }
+        now_beam = next_beam;
+        assert!(!now_beam.is_empty());
+        best_state = Some(now_beam.peek().unwrap().clone());
+        if best_state.clone().unwrap().is_done() {
+            break;
+        }
+    }
+    assert!(best_state.is_some());
+
+    best_state.unwrap().first_action
 }
 
 fn play_game(seed: u64) {
@@ -176,7 +235,7 @@ fn test_ai_score(num: usize) {
     for seed in 0..num {
         let mut state = State::new(seed as u64);
         while !state.is_done() {
-            state.advance(greedy_action(&state));
+            state.advance(beam_search_action(&state, 2, 4));
         }
         score_mean += state.game_score as f64;
     }
