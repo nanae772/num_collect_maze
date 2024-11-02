@@ -18,9 +18,9 @@ impl Coord {
     }
 }
 
-const H: usize = 3;
-const W: usize = 4;
-const END_TURN: usize = 4;
+const H: usize = 30;
+const W: usize = 30;
+const END_TURN: usize = 100;
 const NUM_GAME: usize = 100;
 
 struct TimeKeeper {
@@ -341,11 +341,66 @@ fn chokudai_search_action(
     unreachable!()
 }
 
+fn chokudai_search_action_with_time_threshold(
+    state: &State,
+    beam_width: usize,
+    beam_depth: usize,
+    time_threshold: u128,
+) -> usize {
+    let time_keeper = TimeKeeper::new(time_threshold);
+    let mut beams = vec![BinaryHeap::<State>::new(); beam_depth + 1];
+    beams[0].push(state.clone());
+
+    for _ in 0.. {
+        for t in 0..beam_depth {
+            let (first, second) = beams.split_at_mut(t + 1);
+            let now_beam = &mut first[t];
+            let next_beam = &mut second[0];
+            for i in 0..beam_width {
+                if now_beam.is_empty() {
+                    break;
+                }
+                let now_state = now_beam.peek().unwrap().clone();
+                if now_state.is_done() {
+                    break;
+                }
+                now_beam.pop();
+                let legal_actions = now_state.legal_actions();
+                for action in legal_actions {
+                    let mut next_state = now_state.clone();
+                    next_state.advance(action);
+                    next_state.evaluate_score();
+                    if t == 0 {
+                        next_state.first_action = action;
+                    }
+                    #[cfg(debug_assertions)]
+                    {
+                        // eprintln!("{next_state}");
+                    }
+                    next_beam.push(next_state);
+                }
+            }
+        }
+        if time_keeper.is_over() {
+            break;
+        }
+    }
+
+    for t in (0..=beam_depth).rev() {
+        if !beams[t].is_empty() {
+            return beams[t].peek().unwrap().first_action;
+        }
+    }
+
+    unreachable!()
+}
 fn play_game(seed: u64) {
     let mut state = State::new(seed);
     println!("{}", state);
     while !state.is_done() {
-        state.advance(chokudai_search_action(&state, 1, END_TURN, 2));
+        state.advance(chokudai_search_action_with_time_threshold(
+            &state, 1, END_TURN, 1,
+        ));
         #[cfg(debug_assertions)]
         {
             println!("action determined.");
@@ -362,7 +417,10 @@ fn test_ai_score(num: usize) {
     for seed in 0..num {
         let mut state = State::new(seed as u64);
         while !state.is_done() {
-            state.advance(beam_search_action(&state, 2, END_TURN));
+            // state.advance(chokudai_search_action_with_time_threshold(
+            //     &state, 2, END_TURN, 10,
+            // ));
+            state.advance(beam_search_action_with_time_threshold(&state, 5, 10));
         }
         score_mean += state.game_score as f64;
     }
