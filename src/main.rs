@@ -1,6 +1,7 @@
 #![allow(clippy::needless_range_loop)]
+#![allow(dead_code, unused_mut, unused_variables)]
 use core::fmt;
-use std::{cmp::Ordering, collections::BinaryHeap, env};
+use std::{cmp::Ordering, collections::BinaryHeap, env, time::Instant};
 
 use rand::{prelude::*, Rng, SeedableRng};
 use rand_chacha::ChaCha12Rng;
@@ -17,9 +18,29 @@ impl Coord {
     }
 }
 
-const H: usize = 3;
-const W: usize = 4;
-const END_TURN: usize = 4;
+const H: usize = 30;
+const W: usize = 30;
+const NUM_GAME: usize = 100;
+const END_TURN: usize = 100;
+
+struct TimeKeeper {
+    start_time: std::time::Instant,
+    time_threshold: u128,
+}
+
+impl TimeKeeper {
+    fn new(time_threshold: u128) -> Self {
+        Self {
+            start_time: Instant::now(),
+            time_threshold,
+        }
+    }
+
+    fn is_over(&self) -> bool {
+        let elapsed_msec = self.start_time.elapsed().as_millis();
+        elapsed_msec >= self.time_threshold
+    }
+}
 
 type State = MazeState;
 
@@ -219,6 +240,57 @@ fn beam_search_action(state: &State, beam_width: usize, beam_depth: usize) -> us
     best_state.unwrap().first_action
 }
 
+fn beam_search_action_with_time_threshold(
+    state: &State,
+    beam_width: usize,
+    time_threshold: u128,
+) -> usize {
+    let mut now_beam = BinaryHeap::new();
+    let mut best_state: Option<State> = None;
+    let time_keeper = TimeKeeper::new(time_threshold);
+
+    now_beam.push(state.clone());
+
+    for t in 0.. {
+        let mut next_beam = BinaryHeap::new();
+        for _ in 0..beam_width {
+            #[cfg(debug_assertions)]
+            {
+                // eprintln!(
+                //     "elapsed time: {}",
+                //     time_keeper.start_time.elapsed().as_micros()
+                // );
+            }
+            if time_keeper.is_over() {
+                return best_state.unwrap().first_action;
+            }
+            if now_beam.is_empty() {
+                break;
+            }
+            let now_state = now_beam.pop().unwrap();
+            let legal_actions = now_state.legal_actions();
+            for action in legal_actions {
+                let mut next_state = now_state.clone();
+                next_state.advance(action);
+                next_state.evaluate_score();
+                if t == 0 {
+                    next_state.first_action = action;
+                }
+                next_beam.push(next_state);
+            }
+        }
+        now_beam = next_beam;
+        assert!(!now_beam.is_empty());
+        best_state = Some(now_beam.peek().unwrap().clone());
+        if best_state.clone().unwrap().is_done() {
+            break;
+        }
+    }
+    assert!(best_state.is_some());
+
+    best_state.unwrap().first_action
+}
+
 fn play_game(seed: u64) {
     let mut state = State::new(seed);
     println!("{}", state);
@@ -235,7 +307,7 @@ fn test_ai_score(num: usize) {
     for seed in 0..num {
         let mut state = State::new(seed as u64);
         while !state.is_done() {
-            state.advance(beam_search_action(&state, 2, 4));
+            state.advance(beam_search_action_with_time_threshold(&state, 5, 10));
         }
         score_mean += state.game_score as f64;
     }
@@ -251,6 +323,5 @@ fn main() {
     } else {
         0
     };
-    let num = 1000;
-    test_ai_score(num);
+    test_ai_score(NUM_GAME);
 }
